@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <h1>总览</h1>
+    <div class="header-actions">
+        <span class="refresh-hint" id="refreshHint">自动刷新中...</span>
+        <button class="btn btn-sm" onclick="refreshDashboard()">🔄 刷新</button>
+    </div>
+</div>
+
+<!-- Stats Cards -->
+<div class="stats-grid" id="statsGrid">
+    <div class="stat-card stat-loading"><div class="spinner"></div></div>
+    <div class="stat-card stat-loading"><div class="spinner"></div></div>
+    <div class="stat-card stat-loading"><div class="spinner"></div></div>
+    <div class="stat-card stat-loading"><div class="spinner"></div></div>
+</div>
+
+<!-- Category Breakdown -->
+<div class="section">
+    <h2 class="section-title">分类统计</h2>
+    <div class="category-grid" id="categoryGrid">
+        <div class="stat-loading"><div class="spinner"></div></div>
+    </div>
+</div>
+
+<div class="grid-2col">
+    <!-- Recent Activity -->
+    <div class="section">
+        <h2 class="section-title">最近下载</h2>
+        <div class="activity-list" id="activityList">
+            <div class="stat-loading"><div class="spinner"></div></div>
+        </div>
+    </div>
+
+    <!-- System Status -->
+    <div class="section">
+        <h2 class="section-title">系统状态</h2>
+        <div class="status-card" id="statusCard">
+            <div class="stat-loading"><div class="spinner"></div></div>
+        </div>
+    </div>
+</div>
+
+<script>
+async function refreshDashboard() {
+    const grid = document.getElementById('statsGrid');
+    const catGrid = document.getElementById('categoryGrid');
+    const activityList = document.getElementById('activityList');
+    const statusCard = document.getElementById('statusCard');
+
+    try {
+        const resp = await fetch('/api/stats');
+        const data = await resp.json();
+        const s = data.stats;
+
+        // Stats cards
+        grid.innerHTML = `
+            <div class="stat-card">
+                <div class="stat-icon">📁</div>
+                <div class="stat-body">
+                    <div class="stat-value">${s.total_files}</div>
+                    <div class="stat-label">总文件数</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">💾</div>
+                <div class="stat-body">
+                    <div class="stat-value">${s.total_size_str}</div>
+                    <div class="stat-label">总大小</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">🧲</div>
+                <div class="stat-body">
+                    <div class="stat-value status-${data.qb_status}">${data.qb_status === 'online' ? '在线' : data.qb_status === 'offline' ? '离线' : '未知'}</div>
+                    <div class="stat-label">qBittorrent</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">🤖</div>
+                <div class="stat-body">
+                    <div class="stat-value status-${data.bot_status}">${data.bot_status === 'online' ? '运行中' : data.bot_status === 'idle' ? '待命中' : '离线'}</div>
+                    <div class="stat-label">Bot 状态</div>
+                </div>
+            </div>
+        `;
+
+        // Category breakdown
+        let catHtml = '';
+        for (const [key, val] of Object.entries(s.categories)) {
+            const icons = {video: '🎬', audio: '🎵', photo: '🖼️', document: '📄', torrents: '🧲'};
+            const labels = {video: '视频', audio: '音频', photo: '图片', document: '文档', torrents: '种子'};
+            const pct = s.total_size > 0 ? (val.size / s.total_size * 100).toFixed(1) : 0;
+            catHtml += `
+                <a href="/files?category=${key}" class="category-card">
+                    <div class="cat-icon">${icons[key] || '📁'}</div>
+                    <div class="cat-body">
+                        <div class="cat-name">${labels[key] || key}</div>
+                        <div class="cat-meta">${val.count} 个文件 · ${val.size_str}</div>
+                        <div class="cat-bar"><div class="cat-bar-fill" style="width:${pct}%"></div></div>
+                    </div>
+                </a>
+            `;
+        }
+        catGrid.innerHTML = catHtml;
+
+        // Recent activity
+        if (data.recent && data.recent.length > 0) {
+            activityList.innerHTML = data.recent.map(e => `
+                <div class="activity-item activity-${e.type}">
+                    <span class="activity-icon">${e.icon}</span>
+                    <div class="activity-body">
+                        <div class="activity-msg">${escapeHtml(e.message)}</div>
+                        <div class="activity-time">${e.time}</div>
+                    </div>
+                </div>
+            `).join('');
+        } else {
+            activityList.innerHTML = '<div class="empty-state">暂无下载记录</div>';
+        }
+
+        // Status card
+        statusCard.innerHTML = `
+            <div class="status-row">
+                <span>Bot 进程</span>
+                <span class="tag tag-${data.bot_status}">${data.bot_status === 'online' ? '运行中' : '待命中'}</span>
+            </div>
+            <div class="status-row">
+                <span>qBittorrent</span>
+                <span class="tag tag-${data.qb_status}">${data.qb_status === 'online' ? '在线' : '离线'}</span>
+            </div>
+            <div class="status-row">
+                <span>下载目录</span>
+                <span class="tag tag-online">/downloads</span>
+            </div>
+        `;
+
+        // Update status dots in sidebar
+        document.getElementById('statusBot').className = 'status-dot status-' + data.bot_status;
+        document.getElementById('statusQB').className = 'status-dot status-' + data.qb_status;
+
+    } catch (e) {
+        grid.innerHTML = '<div class="error-state">❌ 无法加载数据</div>';
+    }
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Auto refresh every 15s
+document.addEventListener('DOMContentLoaded', () => {
+    refreshDashboard();
+    setInterval(refreshDashboard, 15000);
+});
+</script>
+{% endblock %}

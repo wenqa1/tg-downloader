@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <h1>磁力链</h1>
+    <div class="header-actions">
+        <button class="btn btn-sm" onclick="refreshTorrents()">🔄 刷新</button>
+    </div>
+</div>
+
+<!-- Active Torrents -->
+<div class="section">
+    <h2 class="section-title">下载中</h2>
+    <div class="torrent-list" id="torrentList">
+        <div class="stat-loading"><div class="spinner"></div></div>
+    </div>
+</div>
+
+<script>
+async function refreshTorrents() {
+    const list = document.getElementById('torrentList');
+
+    try {
+        const resp = await fetch('/api/torrents');
+        const data = await resp.json();
+
+        if (data.error) {
+            list.innerHTML = `<div class="error-state">❌ qBittorrent 连接失败: ${escapeHtml(data.error)}</div>`;
+            return;
+        }
+
+        if (data.torrents.length === 0) {
+            list.innerHTML = '<div class="empty-state">暂无活动下载</div>';
+            return;
+        }
+
+        list.innerHTML = data.torrents.map(t => {
+            const stateLabel = getStateLabel(t.state);
+            const stateClass = getStateClass(t.state);
+            return `
+                <div class="torrent-card">
+                    <div class="torrent-header">
+                        <span class="torrent-name" title="${escapeHtml(t.name)}">${escapeHtml(t.name)}</span>
+                        <span class="tag tag-${stateClass}">${stateLabel}</span>
+                    </div>
+                    <div class="torrent-progress">
+                        <div class="progress-bar">
+                            <div class="progress-fill ${stateClass}" style="width:${t.progress}%"></div>
+                        </div>
+                        <span class="progress-text">${t.progress}%</span>
+                    </div>
+                    <div class="torrent-meta">
+                        <span>📦 ${t.size}</span>
+                        <span>⬇️ ${t.downloaded}</span>
+                        <span>⚡ ${t.speed}</span>
+                        <span>⏱️ ${t.eta}</span>
+                        <span>📊 ${t.ratio}</span>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+    } catch (e) {
+        list.innerHTML = '<div class="error-state">❌ 加载失败</div>';
+    }
+}
+
+function getStateLabel(state) {
+    const labels = {
+        downloading: '下载中', stalledDL: '等待中',
+        uploading: '做种中', stalledUP: '做种中',
+        pausedDL: '已暂停', queuedDL: '排队中',
+        checkingDL: '校验中', checkingUP: '校验中',
+        completed: '已完成', downloaded: '已完成',
+        error: '异常', missingFiles: '文件缺失',
+    };
+    return labels[state] || state;
+}
+
+function getStateClass(state) {
+    if (['downloading', 'stalledDL', 'queuedDL', 'checkingDL'].includes(state)) return 'active';
+    if (['uploading', 'stalledUP', 'completed', 'downloaded'].includes(state)) return 'done';
+    if (['error', 'missingFiles'].includes(state)) return 'error';
+    if (['pausedDL'].includes(state)) return 'paused';
+    return 'active';
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    refreshTorrents();
+    setInterval(refreshTorrents, 10000);
+});
+</script>
+{% endblock %}

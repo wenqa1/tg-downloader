@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TG Downloader</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="layout">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <span class="logo-icon">⬇️</span>
+                    <span class="logo-text">TG<br><small>Downloader</small></span>
+                </div>
+            </div>
+
+            <nav class="sidebar-nav">
+                <a href="/" class="nav-item {% if page == 'dashboard' %}active{% endif %}">
+                    <span class="nav-icon">📊</span>
+                    <span class="nav-label">总览</span>
+                </a>
+                <a href="/files" class="nav-item {% if page == 'files' %}active{% endif %}">
+                    <span class="nav-icon">📁</span>
+                    <span class="nav-label">文件</span>
+                </a>
+                <a href="/torrents" class="nav-item {% if page == 'torrents' %}active{% endif %}">
+                    <span class="nav-icon">🧲</span>
+                    <span class="nav-label">磁力链</span>
+                </a>
+            </nav>
+
+            <div class="sidebar-footer">
+                <div class="status-dot" id="statusBot"></div>
+                <span class="status-label">Bot</span>
+                <div class="status-dot" id="statusQB"></div>
+                <span class="status-label">qB</span>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

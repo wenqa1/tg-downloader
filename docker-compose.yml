@@ -1,0 +1,69 @@
+version: '3.8'
+
+services:
+  # ============================================
+  # TG Downloader 核心服务
+  # ============================================
+  tg-downloader:
+    build: ./core
+    container_name: tg-downloader
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./downloads:/downloads          # 下载文件持久化
+      - ./core/sessions:/app/sessions   # Telethon 会话持久化
+      - ./core/logs:/app/logs           # 日志持久化
+    tty: true                           # 首次登录需要交互式终端
+    stdin_open: true                    # 首次登录需要标准输入
+    depends_on:
+      - qbittorrent
+    networks:
+      - tg-network
+
+  # ============================================
+  # Web 管理界面
+  # ============================================
+  web:
+    build: ./core
+    container_name: tg-downloader-web
+    restart: unless-stopped
+    command: ["python", "-m", "src.web.server"]
+    env_file: .env
+    environment:
+      - WEB_PORT=8081
+      - WEB_HOST=0.0.0.0
+    volumes:
+      - ./downloads:/downloads          # 访问下载文件
+      - ./core/logs:/app/logs           # 读取日志
+    ports:
+      - "8081:8081"                     # Web UI
+    depends_on:
+      - qbittorrent
+    networks:
+      - tg-network
+
+  # ============================================
+  # qBittorrent - 磁力链/种子下载器
+  # ============================================
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    restart: unless-stopped
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - WEBUI_PORT=8080
+      - TZ=Asia/Shanghai
+    volumes:
+      - ./qbittorrent/config:/config
+      - ./downloads/torrents:/downloads
+    ports:
+      - "8080:8080"    # qBittorrent Web UI
+      - "6881:6881"    # BT 下载端口
+      - "6881:6881/udp"
+    networks:
+      - tg-network
+
+networks:
+  tg-network:
+    driver: bridge

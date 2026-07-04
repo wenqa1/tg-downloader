@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <h1>文件</h1>
+    <div class="header-actions">
+        <input type="text" class="search-input" id="searchInput" placeholder="搜索文件..." oninput="filterFiles()">
+    </div>
+</div>
+
+<!-- Category Tabs -->
+<div class="tabs" id="categoryTabs">
+    {% for cat in categories %}
+    <a href="/files?category={{ cat }}"
+       class="tab {% if cat == current_category %}active{% endif %}">
+        <span>{{ category_icons[cat] }}</span>
+        <span>{{ category_labels[cat] }}</span>
+    </a>
+    {% endfor %}
+</div>
+
+<!-- Stats bar -->
+<div class="section-header" id="sectionHeader">
+    <span class="stat-loading"><div class="spinner"></div></span>
+</div>
+
+<!-- File List -->
+<div class="file-list" id="fileList">
+    <div class="stat-loading"><div class="spinner"></div></div>
+</div>
+
+<script>
+const currentCategory = '{{ current_category }}';
+
+async function loadFiles() {
+    const search = document.getElementById('searchInput').value;
+    const fileList = document.getElementById('fileList');
+    const header = document.getElementById('sectionHeader');
+
+    try {
+        const resp = await fetch(`/api/files/${currentCategory}?search=${encodeURIComponent(search)}`);
+        const data = await resp.json();
+
+        header.innerHTML = `<span class="section-count">📁 ${data.icon} ${data.label} · 共 ${data.total} 个文件</span>`;
+
+        if (data.files.length === 0) {
+            fileList.innerHTML = '<div class="empty-state">暂无文件</div>';
+            return;
+        }
+
+        fileList.innerHTML = data.files.map(f => {
+            const ext = f.name.split('.').pop().toLowerCase();
+            return `
+                <div class="file-row">
+                    <span class="file-icon">${getIcon(ext)}</span>
+                    <div class="file-info">
+                        <div class="file-name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</div>
+                        <div class="file-meta">${f.size_str} · ${f.time_str}</div>
+                    </div>
+                    <span class="file-size">${f.size_str}</span>
+                </div>
+            `;
+        }).join('');
+
+    } catch (e) {
+        fileList.innerHTML = '<div class="error-state">❌ 加载失败</div>';
+    }
+}
+
+function filterFiles() {
+    loadFiles();
+}
+
+function getIcon(ext) {
+    const icons = {
+        mp4: '🎬', mkv: '🎬', avi: '🎬', mov: '🎬', webm: '🎬',
+        mp3: '🎵', flac: '🎵', wav: '🎵', aac: '🎵', ogg: '🎵', m4a: '🎵',
+        jpg: '🖼️', jpeg: '🖼️', png: '🖼️', gif: '🖼️', webp: '🖼️',
+        pdf: '📄', zip: '📦', rar: '📦', '7z': '📦',
+        torrent: '🧲',
+        txt: '📝', doc: '📝', docx: '📝',
+    };
+    return icons[ext] || '📄';
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+document.addEventListener('DOMContentLoaded', loadFiles);
+</script>
+{% endblock %}
