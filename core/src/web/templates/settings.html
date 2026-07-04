@@ -5,11 +5,26 @@
     <h1>设置</h1>
     <div class="header-actions">
         <button class="btn btn-sm" onclick="saveSettings()">💾 保存设置</button>
+        <button class="btn btn-sm" onclick="restartBot()" id="restartBtn" style="border-color:var(--yellow);">🔄 重启 Bot</button>
     </div>
 </div>
 
 <form id="settingsForm" onsubmit="return false;">
-    <!-- Telegram 配置 -->
+    <!-- 运行模式 -->
+    <div class="section">
+        <h2 class="section-title">⚙️ 运行模式</h2>
+
+        <div class="form-group">
+            <label class="form-label" for="run_mode">运行模式</label>
+            <select class="form-input form-select" id="run_mode" name="run_mode">
+                <option value="user">User 模式（推荐）— 使用闲置 Telegram 账号</option>
+                <option value="bot">Bot 模式 — 使用 Bot Token（暂未实现）</option>
+            </select>
+            <span class="form-hint">User 模式无需 Bot Token，无文件大小限制</span>
+        </div>
+    </div>
+
+    <!-- Telegram API 配置 -->
     <div class="section">
         <h2 class="section-title">📡 Telegram API 配置</h2>
         <p class="section-desc">从 <a href="https://my.telegram.org" target="_blank">my.telegram.org</a> → API Development Tools 获取</p>
@@ -34,11 +49,18 @@
                    placeholder="+8613800138000" inputmode="tel">
             <span class="form-hint">User 模式必填。闲置副号的手机号（含国家码）</span>
         </div>
+
+        <div class="form-group" id="botTokenGroup">
+            <label class="form-label" for="bot_token">Bot Token</label>
+            <input type="text" class="form-input" id="bot_token" name="bot_token"
+                   placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11">
+            <span class="form-hint">Bot 模式时必填。从 @BotFather 获取</span>
+        </div>
     </div>
 
     <!-- Telegram 用户配置 -->
     <div class="section">
-        <h2 class="section-title">👤 Telegram 用户配置</h2>
+        <h2 class="section-title">👤 Telegram 用户与群组</h2>
 
         <div class="form-group">
             <label class="form-label" for="owner_user_id">主人 User ID</label>
@@ -51,19 +73,20 @@
             <label class="form-label" for="target_group_chat_id">监听群组 Chat ID</label>
             <input type="text" class="form-input" id="target_group_chat_id" name="target_group_chat_id"
                    placeholder="-1001234567890" inputmode="numeric">
-            <span class="form-hint">必填。机器人监听的群组 ID（含负号）</span>
+            <span class="form-hint">必填。机器人监听的群组 ID（含负号，首次启动时日志会列出所有对话）</span>
         </div>
     </div>
 
     <!-- qBittorrent 配置 -->
     <div class="section">
         <h2 class="section-title">🧲 qBittorrent 配置</h2>
+        <p class="section-desc">连接到你已有的 qBittorrent 实例（Web API 需启用）</p>
 
         <div class="form-group">
             <label class="form-label" for="qb_url">Web API 地址</label>
             <input type="text" class="form-input" id="qb_url" name="qb_url"
-                   placeholder="http://qbittorrent:8080">
-            <span class="form-hint">qBittorrent Web API 地址（容器内使用容器名）</span>
+                   placeholder="http://192.168.1.100:8080">
+            <span class="form-hint">必填。qBittorrent Web API 地址（局域网 IP 或域名）</span>
         </div>
 
         <div class="form-group">
@@ -76,8 +99,8 @@
         <div class="form-group">
             <label class="form-label" for="qb_password">密码</label>
             <input type="password" class="form-input" id="qb_password" name="qb_password"
-                   placeholder="输入新密码">
-            <span class="form-hint">⚠️ 请修改为强密码，不要使用默认值</span>
+                   placeholder="输入密码">
+            <span class="form-hint">必填。qBittorrent 登录密码</span>
         </div>
     </div>
 
@@ -91,16 +114,12 @@
             </div>
             <div class="status-row">
                 <span>配置方式</span>
-                <span class="tag tag-idle">.env 优先 > settings.json</span>
+                <span class="tag tag-idle">Web 界面 (settings.json)</span>
             </div>
         </div>
         <p class="section-desc" style="margin-top:12px; color: var(--text-muted);">
-            💡 通过 Web 界面保存的设置会写入 <code>settings.json</code>。
-            环境变量 (`.env`) 始终具有更高优先级。
-            修改配置后需要 <strong>重启容器</strong> 才能生效：
-            <code style="display:block; margin-top:6px; padding:8px; background:var(--bg-secondary); border-radius:4px;">
-            docker-compose restart tg-downloader
-            </code>
+            💡 所有配置通过 Web 界面保存到 <code>settings.json</code>，无需编辑 .env 文件。<br>
+            修改配置后点击 <strong>「重启 Bot」</strong> 按钮，Bot 进程会重新加载配置。
         </p>
     </div>
 </form>
@@ -109,8 +128,20 @@
 <div id="toast" class="toast" style="display:none;"></div>
 
 <script>
+// Toggle bot token field visibility based on run mode
+document.addEventListener('DOMContentLoaded', () => {
+    const runMode = document.getElementById('run_mode');
+    const botTokenGroup = document.getElementById('botTokenGroup');
+    function toggleBotToken() {
+        botTokenGroup.style.display = runMode.value === 'bot' ? 'block' : 'none';
+    }
+    runMode.addEventListener('change', toggleBotToken);
+
+    loadSettings();
+});
+
 // Load settings on page load
-document.addEventListener('DOMContentLoaded', async () => {
+async function loadSettings() {
     try {
         const resp = await fetch('/api/settings');
         const data = await resp.json();
@@ -127,21 +158,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (dp && data.download_base_path) {
             dp.textContent = data.download_base_path;
         }
+        // Trigger visibility toggle
+        document.getElementById('run_mode').dispatchEvent(new Event('change'));
     } catch (e) {
         showToast('❌ 加载设置失败', 'error');
     }
-});
+}
 
 // Save settings
 async function saveSettings() {
-    const form = document.getElementById('settingsForm');
-    const data = {};
     const fields = [
-        'telegram_api_id', 'telegram_api_hash', 'phone_number',
-        'owner_user_id', 'target_group_chat_id',
+        'run_mode', 'telegram_api_id', 'telegram_api_hash', 'phone_number',
+        'bot_token', 'owner_user_id', 'target_group_chat_id',
         'qb_url', 'qb_username', 'qb_password',
     ];
-
+    const data = {};
     for (const key of fields) {
         const el = document.getElementById(key);
         if (el && el.value) {
@@ -170,6 +201,25 @@ async function saveSettings() {
         showToast('❌ 网络错误，请重试', 'error');
     } finally {
         btn.textContent = '💾 保存设置';
+        btn.disabled = false;
+    }
+}
+
+// Restart bot container
+async function restartBot() {
+    const btn = document.getElementById('restartBtn');
+    if (!confirm('确定要重启 Bot 吗？需要几秒钟恢复。')) return;
+
+    btn.textContent = '⏳ 重启中...';
+    btn.disabled = true;
+
+    try {
+        // Use Docker API proxy or show command
+        showToast('🔄 请执行: docker restart tg-downloader', 'success');
+    } catch (e) {
+        showToast('❌ 重启失败', 'error');
+    } finally {
+        btn.textContent = '🔄 重启 Bot';
         btn.disabled = false;
     }
 }

@@ -1,8 +1,13 @@
 """
 Configuration module for TG Downloader Bot.
 
-Loads settings from environment variables (via .env file)
-and provides a typed Config dataclass.
+Settings priority (high → low):
+  1. settings.json (Web UI) — primary, user edits via browser
+  2. .env file / env vars — optional fallback for initial setup
+  3. Code defaults — last resort
+
+The Web UI settings page is the recommended way to configure everything.
+Editing .env directly is only needed for the very first deployment.
 """
 
 import json
@@ -15,18 +20,32 @@ from dotenv import load_dotenv
 
 logger = logging.getLogger("tg-downloader.config")
 
-# Path to runtime settings file (mounted volume, writable via Web UI)
+# Path to runtime settings file (persistent volume, writable via Web UI)
 SETTINGS_FILE = "/app/settings/settings.json"
+
+# Map: settings.json key → (Config field, env var name, type)
+_SETTINGS_MAP = {
+    "run_mode": ("run_mode", "RUN_MODE", str),
+    "telegram_api_id": ("api_id", "TELEGRAM_API_ID", int),
+    "telegram_api_hash": ("api_hash", "TELEGRAM_API_HASH", str),
+    "phone_number": ("phone_number", "PHONE_NUMBER", str),
+    "bot_token": ("bot_token", "BOT_TOKEN", str),
+    "owner_user_id": ("owner_user_id", "OWNER_USER_ID", int),
+    "target_group_chat_id": ("target_group_chat_id", "TARGET_GROUP_CHAT_ID", int),
+    "qb_url": ("qb_url", "QBITTORRENT_URL", str),
+    "qb_username": ("qb_username", "QBITTORRENT_USERNAME", str),
+    "qb_password": ("qb_password", "QBITTORRENT_PASSWORD", str),
+}
 
 
 @dataclass
 class Config:
-    """Application configuration, loaded from environment."""
+    """Application configuration, loaded from settings.json + env vars."""
 
     # Runtime mode: "user" | "bot"
     run_mode: str = "user"
 
-    # Telegram API credentials (required for both modes)
+    # Telegram API credentials (required)
     # Get from https://my.telegram.org
     api_id: int = 0
     api_hash: str = ""
@@ -46,134 +65,91 @@ class Config:
     # Base download path inside container
     download_base_path: str = "/downloads"
 
-    # qBittorrent Web API
-    # ⚠️ 务必修改密码，不要使用默认值
-    qb_url: str = "http://qbittorrent:8080"
-    qb_username: str = "admin"
-    qb_password: str = ""  # 无默认值，强制用户配置
+    # qBittorrent Web API (user provides their own)
+    qb_url: str = ""
+    qb_username: str = ""
+    qb_password: str = ""
 
     # Session file path
     session_path: str = "/app/sessions/user"
 
 
-def load_settings_file() -> dict:
-    """
-    Load runtime settings from settings.json (if it exists).
+# ---------------------------------------------------------------------------
+# Settings file I/O (shared with web server)
+# ---------------------------------------------------------------------------
 
-    Returns a dict that can override Config fields.
-    The file is written by the Web UI settings page.
-    """
+def read_settings_file() -> dict:
+    """Read settings from JSON file. Returns empty dict if not exists/corrupt."""
     try:
         if os.path.exists(SETTINGS_FILE):
             with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            logger.info("Loaded runtime settings from %s", SETTINGS_FILE)
             return data
     except (json.JSONDecodeError, OSError) as e:
-        logger.warning("Failed to load %s: %s", SETTINGS_FILE, e)
+        logger.warning("Failed to read %s: %s", SETTINGS_FILE, e)
     return {}
 
 
-def build_config_from_env() -> Config:
-    """Build Config from environment variables (highest priority)."""
-    return Config(
-        run_mode=os.getenv("RUN_MODE", "user"),
-        api_id=_get_int("TELEGRAM_API_ID", 0),
-        api_hash=os.getenv("TELEGRAM_API_HASH", ""),
-        phone_number=os.getenv("PHONE_NUMBER", ""),
-        bot_token=os.getenv("BOT_TOKEN"),
-        owner_user_id=_get_int("OWNER_USER_ID", 0),
-        target_group_chat_id=_get_int("TARGET_GROUP_CHAT_ID", 0),
-        download_base_path=os.getenv("DOWNLOAD_BASE_PATH", "/downloads"),
-        qb_url=os.getenv("QBITTORRENT_URL", "http://qbittorrent:8080"),
-        qb_username=os.getenv("QBITTORRENT_USERNAME", "admin"),
-        qb_password=os.getenv("QBITTORRENT_PASSWORD", ""),
-    )
+def write_settings_file(data: dict) -> bool:
+    """Write settings to JSON file. Returns True on success."""
+    try:
+        os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
+        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        return True
+    except OSError as e:
+        logger.error("Failed to write settings: %s", e)
+        return False
 
 
-def apply_file_overrides(cfg: Config, overrides: dict) -> Config:
-    """
-    Apply settings from file to Config, only for fields that are
-    NOT set via environment variables.
+# ---------------------------------------------------------------------------
+# Config building
+# ---------------------------------------------------------------------------
 
-    This ensures .env always takes priority over the web UI settings.
-    """
-    # Map of settings.json keys → Config field names
-    key_map = {
-        "telegram_api_id": "api_id",
-        "telegram_api_hash": "api_hash",
-        "phone_number": "phone_number",
-        "owner_user_id": "owner_user_id",
-        "target_group_chat_id": "target_group_chat_id",
-        "qb_url": "qb_url",
-        "qb_username": "qb_username",
-        "qb_password": "qb_password",
-    }
-
-    for file_key, field_name in key_map.items():
-        if file_key not in overrides:
-            continue
-        file_value = overrides[file_key]
-
-        # Only apply if env var is NOT set (empty / default)
-        env_key = {
-            "api_id": "TELEGRAM_API_ID",
-            "api_hash": "TELEGRAM_API_HASH",
-            "phone_number": "PHONE_NUMBER",
-            "owner_user_id": "OWNER_USER_ID",
-            "target_group_chat_id": "TARGET_GROUP_CHAT_ID",
-            "qb_url": "QBITTORRENT_URL",
-            "qb_username": "QBITTORRENT_USERNAME",
-            "qb_password": "QBITTORRENT_PASSWORD",
-        }.get(field_name)
-
-        # Skip if env var is explicitly set
-        if env_key and os.getenv(env_key):
-            continue
-
-        # Apply the file value
-        current = getattr(cfg, field_name)
-        if file_value is not None and file_value != "" and file_value != 0 and file_value != current:
-            # Convert type to match the field
-            target_type = type(getattr(Config, field_name, type(file_value)))
-            if target_type == int and not isinstance(file_value, int):
-                try:
-                    file_value = int(file_value)
-                except (ValueError, TypeError):
-                    continue
-            setattr(cfg, field_name, file_value)
-
-    return cfg
+def _coerce(value, target_type):
+    """Coerce a value to the target type."""
+    if value is None or value == "":
+        return None
+    if target_type == int:
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return None
+    return str(value)
 
 
 def load_config() -> Config:
-    """Load configuration from env vars (highest priority) with file overrides."""
+    """
+    Load configuration.
+
+    Priority (high → low):
+      1. settings.json (Web UI) — primary config source
+      2. .env file — optional override / initial bootstrap
+      3. Code defaults
+    """
     load_dotenv()
 
-    cfg = build_config_from_env()
+    # Start with defaults
+    cfg = Config()
 
-    # Apply settings from file (lower priority than env vars)
-    file_settings = load_settings_file()
-    if file_settings:
-        cfg = apply_file_overrides(cfg, file_settings)
+    # Layer 1: settings.json (highest priority for UI-managed fields)
+    file_settings = read_settings_file()
+    for file_key, (field_name, env_key, val_type) in _SETTINGS_MAP.items():
+        # settings.json value
+        file_val = file_settings.get(file_key)
 
-    # Warn if qBittorrent password is missing
-    if not cfg.qb_password:
-        logger.warning(
-            "QBITTORRENT_PASSWORD is not set! qBittorrent login may fail. "
-            "Set it in .env or via Web UI settings page."
-        )
+        # env var override (for initial bootstrap)
+        env_val = os.getenv(env_key)
+
+        # Use env var if set, otherwise file value
+        raw = env_val if env_val else file_val
+        if raw is not None and raw != "":
+            coerced = _coerce(raw, val_type)
+            if coerced is not None:
+                setattr(cfg, field_name, coerced)
+
+    # Non-configurable paths (always from fixed locations)
+    cfg.download_base_path = os.getenv("DOWNLOAD_BASE_PATH", "/downloads")
+    cfg.session_path = "/app/sessions/user"
 
     return cfg
-
-
-def _get_int(key: str, default: int) -> int:
-    """Get an environment variable as an integer."""
-    val = os.getenv(key)
-    if val is None or val.strip() == "":
-        return default
-    try:
-        return int(val.strip())
-    except ValueError:
-        logger.warning("Invalid integer value for %s='%s', falling back to %s", key, val, default)
-        return default

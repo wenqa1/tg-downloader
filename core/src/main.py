@@ -1,12 +1,13 @@
 """
 TG Downloader Bot - Main Entry Point
 
-Starts the Telegram download bot in either "user" or "bot" mode.
-For now, only "user" mode is implemented.
+Starts the Telegram download bot and the web management interface
+in the same process. The web server runs in a background asyncio task.
 
 Usage:
-    python -m src.main              # Uses .env file in CWD
-    RUN_MODE=user python -m src.main
+    python src/main.py                  # Normal start
+    python src/main.py --web-only       # Web server only (debug)
+    python src/main.py --bot-only       # Bot only (debug)
 """
 
 import asyncio
@@ -156,8 +157,26 @@ async def _run_bot_mode(config: Config) -> None:
     sys.exit(1)
 
 
+async def _start_web_server(host: str = "0.0.0.0", port: int = 8081) -> None:
+    """Start the FastAPI web server in a background asyncio task."""
+    import uvicorn
+    from web.server import app
+
+    cfg = uvicorn.Config(
+        app,
+        host=host,
+        port=port,
+        log_level="info",
+        # Suppress uvicorn's own startup logs for cleaner output
+        access_log=False,
+    )
+    server = uvicorn.Server(cfg)
+    logger.info("🌐 Web management interface starting on http://%s:%s", host, port)
+    await server.serve()
+
+
 async def _main() -> None:
-    """Parse config and dispatch to the appropriate mode."""
+    """Parse config, start web server, then dispatch to bot mode."""
     _setup_logging()
 
     logger.info("=" * 50)
@@ -166,17 +185,49 @@ async def _main() -> None:
 
     config = load_config()
 
-    logger.info(f"Run mode: {config.run_mode}")
-    logger.info(f"Session path: {config.session_path}")
-    logger.info(f"Download path: {config.download_base_path}")
+    logger.info("Run mode: %s", config.run_mode)
+    logger.info("Session path: %s", config.session_path)
+    logger.info("Download path: %s", config.download_base_path)
 
-    if config.run_mode == "user":
-        await _run_user_mode(config)
-    elif config.run_mode == "bot":
-        await _run_bot_mode(config)
-    else:
-        logger.error(f"Unknown RUN_MODE: {config.run_mode}. Must be 'user' or 'bot'.")
-        sys.exit(1)
+    # Parse CLI flags for debug modes
+    cli_args = set(sys.argv[1:])
+    web_only = "--web-only" in cli_args
+    bot_only = "--bot-only" in cli_args
+
+    web_port = int(os.getenv("WEB_PORT", "8081"))
+    web_host = os.getenv("WEB_HOST", "0.0.0.0")
+
+    if bot_only:
+        # Bot only (no web server, useful for debugging)
+        if config.run_mode == "user":
+            await _run_user_mode(config)
+        elif config.run_mode == "bot":
+            await _run_bot_mode(config)
+        return
+
+    # Start web server as a background task
+    web_task = asyncio.create_task(_start_web_server(web_host, web_port))
+
+    if web_only:
+        # Web server only
+        await web_task
+        return
+
+    # Start bot + web server concurrently
+    try:
+        if config.run_mode == "user":
+            await _run_user_mode(config)
+        elif config.run_mode == "bot":
+            await _run_bot_mode(config)
+        else:
+            logger.error("Unknown RUN_MODE: %s. Must be 'user' or 'bot'.", config.run_mode)
+    finally:
+        # When bot exits, cancel web server
+        web_task.cancel()
+        try:
+            await web_task
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            pass
 
 
 def main() -> None:

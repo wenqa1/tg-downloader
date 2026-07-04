@@ -8,15 +8,14 @@ FastAPI-based web server providing:
   - Recent download history
   - Settings management (API credentials, Telegram config)
 
-Run with: python -m src.web.server
-Access at: http://localhost:8081
+Run embedded in the main bot process, or standalone for debugging.
+  Standalone: python -m src.web.server
 """
 
 import json
 import logging
 import os
 import re
-import sys
 from datetime import datetime
 from typing import Optional
 
@@ -26,11 +25,9 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-# Add src to path so we can import config
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-from src.config import load_config, SETTINGS_FILE
-from src.downloaders.qb_client import QBittorrentClient
-from src.helpers import format_size
+from config import load_config, read_settings_file, write_settings_file, _SETTINGS_MAP
+from downloaders.qb_client import QBittorrentClient
+from helpers import format_size
 
 logger = logging.getLogger("tg-downloader.web")
 
@@ -266,10 +263,13 @@ async def settings_page(request: Request):
 # Routes - Settings API
 # ---------------------------------------------------------------------------
 
+# Keys exposed via settings API (in display order)
 SETTINGS_KEYS = [
+    "run_mode",
     "telegram_api_id",
     "telegram_api_hash",
     "phone_number",
+    "bot_token",
     "owner_user_id",
     "target_group_chat_id",
     "qb_url",
@@ -278,66 +278,18 @@ SETTINGS_KEYS = [
 ]
 
 
-def _read_settings_file() -> dict:
-    """Read settings from JSON file, return empty dict if not exists."""
-    try:
-        if os.path.exists(SETTINGS_FILE):
-            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-    except (json.JSONDecodeError, OSError) as e:
-        logger.warning("Failed to read settings: %s", e)
-    return {}
-
-
-def _write_settings_file(data: dict) -> bool:
-    """Write settings to JSON file."""
-    try:
-        os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
-        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        return True
-    except OSError as e:
-        logger.error("Failed to write settings: %s", e)
-        return False
-
-
 @app.get("/api/settings")
 async def api_get_settings():
     """
-    Get current settings.
-
-    Merges env vars with file settings (env vars take priority).
-    Secrets (api_hash, qb_password) are masked for security.
+    Get current settings from settings.json (primary).
+    Always includes download_base_path (read-only).
     """
-    file_settings = _read_settings_file()
+    file_settings = read_settings_file()
 
     result = {}
     for key in SETTINGS_KEYS:
-        # Check env var first
-        env_key = {
-            "telegram_api_id": "TELEGRAM_API_ID",
-            "telegram_api_hash": "TELEGRAM_API_HASH",
-            "phone_number": "PHONE_NUMBER",
-            "owner_user_id": "OWNER_USER_ID",
-            "target_group_chat_id": "TARGET_GROUP_CHAT_ID",
-            "qb_url": "QBITTORRENT_URL",
-            "qb_username": "QBITTORRENT_USERNAME",
-            "qb_password": "QBITTORRENT_PASSWORD",
-        }.get(key)
-
-        env_value = os.getenv(env_key) if env_key else None
-        file_value = file_settings.get(key)
-
-        # Env var takes priority
-        value = env_value if env_value else file_value
-        if value is not None:
-            # Convert types
-            if key in ("telegram_api_id", "owner_user_id", "target_group_chat_id"):
-                try:
-                    value = int(value)
-                except (ValueError, TypeError):
-                    value = 0
-            result[key] = value
+        if key in file_settings:
+            result[key] = file_settings[key]
 
     # Always include download path (read-only)
     result["download_base_path"] = config.download_base_path
@@ -348,8 +300,8 @@ async def api_get_settings():
 @app.put("/api/settings")
 async def api_put_settings(request: Request):
     """
-    Save settings to file. Env vars still take priority at runtime.
-    Changes take effect after container restart.
+    Save settings to settings.json (primary config source).
+    Changes take effect after bot restart.
     """
     try:
         body = await request.json()
@@ -359,11 +311,18 @@ async def api_put_settings(request: Request):
             content={"error": "无效的 JSON 格式"},
         )
 
-    # Validate allowed keys
+    # Validate allowed keys and coerce types
     clean = {}
     for key in SETTINGS_KEYS:
         if key in body:
-            clean[key] = body[key]
+            val = body[key]
+            # Coerce numeric fields
+            if key in ("telegram_api_id", "owner_user_id", "target_group_chat_id"):
+                try:
+                    val = int(val)
+                except (ValueError, TypeError):
+                    continue
+            clean[key] = val
 
     if not clean:
         return JSONResponse(
@@ -371,12 +330,12 @@ async def api_put_settings(request: Request):
             content={"error": "没有需要保存的配置项"},
         )
 
-    # Merge with existing file settings
-    existing = _read_settings_file()
+    # Merge with existing, write
+    existing = read_settings_file()
     existing.update(clean)
 
-    if _write_settings_file(existing):
-        return {"success": True, "message": "设置已保存，重启后生效"}
+    if write_settings_file(existing):
+        return {"success": True, "message": "设置已保存，重启 bot 后生效"}
     else:
         return JSONResponse(
             status_code=500,

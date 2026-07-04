@@ -10,7 +10,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY src/ ./src/
 
 # Create runtime directories
-RUN mkdir -p /app/sessions /app/logs
+RUN mkdir -p /app/sessions /app/logs /app/settings /downloads
 
-# Run
+# Web UI port
+EXPOSE 8081
+
+# Start both bot + web server
 CMD ["python", "src/main.py"]
