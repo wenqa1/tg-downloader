@@ -13,6 +13,7 @@ from telethon import TelegramClient
 from telethon.tl.custom import Message
 
 from config import Config
+from helpers import format_size, format_speed, format_time, monitor_torrent
 from notifiers.base import BaseNotifier
 from organizer.classifier import classify, get_filename, get_download_path, resolve_conflict
 
@@ -60,7 +61,7 @@ async def handle_file(
     # Generate file info
     filename = get_filename(msg, category)
     file_size = _get_file_size(msg)
-    size_str = _format_size(file_size)
+    size_str = format_size(file_size)
     download_path = get_download_path(config.download_base_path, category, filename)
     download_path = resolve_conflict(download_path)
 
@@ -78,7 +79,7 @@ async def handle_file(
     progress_callback = None
     if file_size and file_size > PROGRESS_THRESHOLD:
         progress_callback = _make_progress_callback(
-            notifier, filename, file_size, msg.id
+            notifier, filename, file_size
         )
 
     # Download the file using Telethon
@@ -99,14 +100,14 @@ async def handle_file(
     # Check result
     if downloaded_path:
         elapsed = time.time() - start_time
-        final_size = _format_size(os.path.getsize(downloaded_path))
-        speed = _format_speed(file_size, elapsed) if elapsed > 0 else ""
+        final_size = format_size(os.path.getsize(downloaded_path))
+        speed = format_speed(file_size, elapsed) if elapsed > 0 else ""
 
         await notifier.send(
             f"✅ *下载完成*\n"
             f"📄 `{os.path.basename(downloaded_path)}`\n"
             f"📦 {final_size}\n"
-            f"⏱️ {_format_time(elapsed)}{speed}\n"
+            f"⏱️ {format_time(elapsed)}{speed}\n"
             f"📂 `{downloaded_path}`"
         )
         logger.info(f"Download complete: {downloaded_path}")
@@ -140,68 +141,19 @@ async def _handle_torrent_file(
 
     # Add to qBittorrent
     torrents_dir = os.path.join(config.download_base_path, "torrents")
-    info_hash = await qb_client.add_torrent_file(torrent_path, save_path=torrents_dir)
+    added = await qb_client.add_torrent_file(torrent_path, save_path=torrents_dir)
 
-    if info_hash:
+    if added:
         await notifier.send(
             f"🧲 *已添加种子到 qBittorrent*\n"
             f"📄 `{os.path.basename(torrent_path)}`\n"
             f"进度: 0% (等待下载中...)"
-        )
-        # Start monitoring in background
-        asyncio.ensure_future(
-            _monitor_torrent(qb_client, info_hash, notifier, config.owner_user_id)
         )
     else:
         await notifier.send(
             f"❌ *种子添加到 qBittorrent 失败*\n"
             f"请检查 qBittorrent 是否正常运行"
         )
-
-
-async def _monitor_torrent(qb_client, info_hash: str, notifier, owner_id: int) -> None:
-    """Periodically check torrent status and notify when complete."""
-    last_progress = -1
-    while True:
-        await asyncio.sleep(30)
-        try:
-            info = await qb_client.get_torrent_info(info_hash)
-            if info is None:
-                logger.warning(f"Torrent {info_hash} not found (may have been removed)")
-                return
-
-            name = info.get("name", "Unknown")
-            progress = info.get("progress", 0) * 100  # 0.0-1.0 to percentage
-            state = info.get("state", "")
-
-            # Notify every 25% progress if meaningful change
-            progress_step = int(progress / 25) * 25
-            if progress_step > last_progress and progress_step > 0:
-                last_progress = progress_step
-                await notifier.send(
-                    f"🧲 *磁力链下载进度*\n"
-                    f"📄 `{name}`\n"
-                    f"📊 {progress_step}% - 状态: {state}"
-                )
-
-            # Check completion
-            if state == "completed" or state == "downloaded":
-                await notifier.send(
-                    f"✅ *磁力链下载完成*\n📄 `{name}`"
-                )
-                return
-
-            # Check for errors
-            if state in ("error", "missingFiles", "unknown"):
-                await notifier.send(
-                    f"❌ *磁力链下载异常*\n📄 `{name}`\n状态: {state}"
-                )
-                return
-
-        except Exception as e:
-            logger.error(f"Error monitoring torrent {info_hash}: {e}")
-            # Don't abort on transient errors, keep polling
-            await asyncio.sleep(60)
 
 
 def _get_file_size(msg: Message) -> Optional[int]:
@@ -227,39 +179,7 @@ def _get_file_size(msg: Message) -> Optional[int]:
     return None
 
 
-def _format_size(size_bytes: Optional[int]) -> str:
-    """Format bytes into human-readable string."""
-    if not size_bytes:
-        return "未知大小"
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if size_bytes < 1024:
-            return f"{size_bytes:.1f} {unit}"
-        size_bytes /= 1024
-    return f"{size_bytes:.1f} PB"
-
-
-def _format_time(seconds: float) -> str:
-    """Format seconds into human-readable time."""
-    if seconds < 60:
-        return f"{seconds:.0f}秒"
-    minutes = int(seconds // 60)
-    secs = int(seconds % 60)
-    if minutes < 60:
-        return f"{minutes}分{secs}秒"
-    hours = minutes // 60
-    minutes = minutes % 60
-    return f"{hours}时{minutes}分{secs}秒"
-
-
-def _format_speed(size_bytes: int, elapsed_seconds: float) -> str:
-    """Format download speed."""
-    if elapsed_seconds <= 0:
-        return ""
-    speed = size_bytes / elapsed_seconds
-    return f" | ⚡ {_format_size(speed)}/s"
-
-
-def _make_progress_callback(notifier, filename: str, file_size: int, msg_id: int):
+def _make_progress_callback(notifier, filename: str, file_size: int):
     """
     Create a progress callback for Telethon's download_media.
     Sends notification at predefined percentage steps.
@@ -267,7 +187,6 @@ def _make_progress_callback(notifier, filename: str, file_size: int, msg_id: int
     reported_steps = set()
 
     async def callback(current: int, total: int) -> None:
-        nonlocal reported_steps
         if total <= 0:
             return
         pct = int((current / total) * 100)
@@ -276,7 +195,7 @@ def _make_progress_callback(notifier, filename: str, file_size: int, msg_id: int
         for step in PROGRESS_STEPS:
             if pct >= step and step not in reported_steps:
                 reported_steps.add(step)
-                downloaded = _format_size(current)
+                downloaded = format_size(current)
                 await notifier.send(
                     f"⏳ *下载中:* `{filename}`\n"
                     f"📊 {pct}% ({downloaded})"

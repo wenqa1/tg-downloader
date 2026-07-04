@@ -15,7 +15,7 @@ from telethon.tl.custom import Message
 EXTENSION_MAP: dict[str, str] = {
     # Video
     ".mp4": "video", ".mkv": "video", ".avi": "video",
-    ".mov": "video", ".webm": "video", ".mkv": "video",
+    ".mov": "video", ".webm": "video",
     ".flv": "video", ".wmv": "video", ".ts": "video",
     # Audio
     ".mp3": "audio", ".flac": "audio", ".wav": "audio",

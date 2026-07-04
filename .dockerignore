@@ -1,9 +1,9 @@
 # ============================================
-# Environment
+# Git
 # ============================================
-.env
-.env.local
-.env.production
+.git/
+.gitignore
+.gitattributes
 
 # ============================================
 # Runtime data (auto-generated)
@@ -32,8 +32,13 @@ venv/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-pip-log.txt
-pip-delete-this-directory.txt
+
+# ============================================
+# Environment
+# ============================================
+.env
+.env.local
+.env.production
 
 # ============================================
 # IDE
@@ -42,7 +47,6 @@ pip-delete-this-directory.txt
 .vscode/
 *.swp
 *.swo
-*.swn
 *~
 
 # ============================================
@@ -58,3 +62,8 @@ ehthumbs.db
 # ============================================
 .docker/
 docker-compose.override.yml
+
+# ============================================
+# Documentation (not needed at runtime)
+# ============================================
+README.md

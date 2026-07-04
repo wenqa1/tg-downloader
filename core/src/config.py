@@ -5,11 +5,14 @@ Loads settings from environment variables (via .env file)
 and provides a typed Config dataclass.
 """
 
+import logging
 import os
 from dataclasses import dataclass, field
 from typing import Optional
 
 from dotenv import load_dotenv
+
+logger = logging.getLogger("tg-downloader.config")
 
 
 @dataclass
@@ -40,9 +43,10 @@ class Config:
     download_base_path: str = "/downloads"
 
     # qBittorrent Web API
+    # ⚠️ 务必在 .env 中修改密码，不要使用默认值
     qb_url: str = "http://qbittorrent:8080"
     qb_username: str = "admin"
-    qb_password: str = "adminadmin"
+    qb_password: str = ""  # 无默认值，强制用户配置
 
     # Session file path
     session_path: str = "/app/sessions/user"
@@ -63,8 +67,15 @@ def load_config() -> Config:
         download_base_path=os.getenv("DOWNLOAD_BASE_PATH", "/downloads"),
         qb_url=os.getenv("QBITTORRENT_URL", "http://qbittorrent:8080"),
         qb_username=os.getenv("QBITTORRENT_USERNAME", "admin"),
-        qb_password=os.getenv("QBITTORRENT_PASSWORD", "adminadmin"),
+        qb_password=os.getenv("QBITTORRENT_PASSWORD", ""),
     )
+
+    # Warn if qBittorrent password uses the default
+    if not cfg.qb_password:
+        logger.warning(
+            "QBITTORRENT_PASSWORD is not set! qBittorrent login may fail. "
+            "Set it in your .env file."
+        )
 
     return cfg
 
@@ -77,4 +88,5 @@ def _get_int(key: str, default: int) -> int:
     try:
         return int(val.strip())
     except ValueError:
+        logger.warning("Invalid integer value for %s='%s', falling back to %s", key, val, default)
         return default

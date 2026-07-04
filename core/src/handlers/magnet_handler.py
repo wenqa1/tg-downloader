@@ -8,13 +8,13 @@ import logging
 import os
 import re
 import time
-from typing import Optional
 
 import aiohttp
 
 from telethon import TelegramClient
 
 from config import Config
+from helpers import monitor_torrent
 from notifiers.base import BaseNotifier
 
 logger = logging.getLogger("tg-downloader.magnet_handler")
@@ -80,8 +80,8 @@ async def _process_magnet(
             f"📊 进度: 0% (等待下载中...)"
         )
         # Start monitoring in background
-        asyncio.ensure_future(
-            _monitor_torrent_internal(qb_client, info_hash, notifier)
+        asyncio.create_task(
+            monitor_torrent(qb_client, info_hash, notifier, label="磁力链")
         )
     else:
         await notifier.send(
@@ -102,64 +102,59 @@ async def _process_torrent_url(
                     await notifier.send(f"❌ *种子文件下载失败*\nHTTP {resp.status}")
                     return
 
-                # Save to watch directory
-                watch_dir = f"{config.download_base_path}/torrents/watch"
-                os.makedirs(watch_dir, exist_ok=True)
+                # Check content size before reading (max 10MB)
+                content_length = resp.headers.get("Content-Length")
+                if content_length and int(content_length) > 10 * 1024 * 1024:
+                    await notifier.send(
+                        f"❌ *种子文件过大*\n文件超过 10MB 限制，已跳过"
+                    )
+                    return
 
-                filename = os.path.basename(url.split("?")[0])
-                if not filename.endswith(".torrent"):
+                content = await resp.read()
+                if len(content) > 10 * 1024 * 1024:
+                    await notifier.send(
+                        f"❌ *种子文件过大*\n实际大小 {len(content)} 字节超过 10MB 限制"
+                    )
+                    return
+
+                # Generate safe filename from URL
+                raw_name = os.path.basename(url.split("?")[0])
+                if raw_name.endswith(".torrent"):
+                    # Sanitize: only allow safe characters
+                    safe_name = re.sub(r'[^\w.\-]', '_', raw_name)
+                    filename = safe_name if safe_name else f"torrent_{int(time.time())}.torrent"
+                else:
                     filename = f"torrent_{int(time.time())}.torrent"
 
+                # Save to watch directory (async I/O)
+                watch_dir = f"{config.download_base_path}/torrents/watch"
+                os.makedirs(watch_dir, exist_ok=True)
                 filepath = os.path.join(watch_dir, filename)
-                content = await resp.read()
-                with open(filepath, "wb") as f:
-                    f.write(content)
+
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, _write_file, filepath, content)
 
                 # Add to qBittorrent
                 torrents_dir = f"{config.download_base_path}/torrents"
-                info_hash = await qb_client.add_torrent_file(filepath, save_path=torrents_dir)
+                added = await qb_client.add_torrent_file(filepath, save_path=torrents_dir)
 
-                if info_hash:
+                if added:
                     await notifier.send(
                         f"✅ *种子已添加到 qBittorrent*\n📄 `{filename}`"
                     )
                 else:
                     await notifier.send("❌ *种子添加失败*")
+    except asyncio.TimeoutError:
+        logger.error("Timeout downloading torrent URL: %s", url)
+        await notifier.send("❌ *种子下载超时*")
     except Exception as e:
-        logger.error(f"Failed to process torrent URL: {e}")
-        await notifier.send(f"❌ *种子处理失败*\n原因: {str(e)[:200]}")
+        logger.error("Failed to process torrent URL %s: %s", url, e, exc_info=True)
+        await notifier.send("❌ *种子处理失败*")
 
 
-async def _monitor_torrent_internal(qb_client, info_hash: str, notifier):
-    """Monitor torrent progress and notify on completion."""
-    last_progress = -1
-    while True:
-        await asyncio.sleep(30)
-        try:
-            info = await qb_client.get_torrent_info(info_hash)
-            if info is None:
-                return
+def _write_file(filepath: str, content: bytes) -> None:
+    """Synchronous file write, intended for run_in_executor."""
+    with open(filepath, "wb") as f:
+        f.write(content)
 
-            name = info.get("name", "Unknown")
-            progress = info.get("progress", 0) * 100
-            state = info.get("state", "")
 
-            # Progress notification at 25% intervals
-            progress_step = int(progress / 25) * 25
-            if progress_step > last_progress and progress_step > 0:
-                last_progress = progress_step
-                await notifier.send(
-                    f"🧲 *磁力链下载进度*\n📄 `{name}`\n📊 {progress_step}%"
-                )
-
-            if state in ("completed", "downloaded"):
-                await notifier.send(f"✅ *磁力链下载完成*\n📄 `{name}`")
-                return
-
-            if state in ("error", "missingFiles"):
-                await notifier.send(f"❌ *磁力链下载异常*\n📄 `{name}`\n状态: {state}")
-                return
-
-        except Exception as e:
-            logger.error(f"Torrent monitor error: {e}")
-            await asyncio.sleep(60)

@@ -11,13 +11,11 @@ Run with: python -m src.web.server
 Access at: http://localhost:8081
 """
 
-import asyncio
 import logging
 import os
 import re
 import sys
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
 
 import uvicorn
@@ -29,6 +27,10 @@ from fastapi.templating import Jinja2Templates
 # Add src to path so we can import config
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from src.config import load_config
+from src.downloaders.qb_client import QBittorrentClient
+from src.helpers import format_size
+
+logger = logging.getLogger("tg-downloader.web")
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -41,6 +43,21 @@ STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "templates")
 
 CATEGORIES = ["video", "audio", "photo", "document", "torrents"]
+
+# Shared qBittorrent client (created once, reused across requests)
+_qb_client: Optional[QBittorrentClient] = None
+
+
+def _get_qb_client() -> QBittorrentClient:
+    """Get or create the shared qBittorrent client singleton."""
+    global _qb_client
+    if _qb_client is None:
+        _qb_client = QBittorrentClient(
+            base_url=config.qb_url,
+            username=config.qb_username,
+            password=config.qb_password,
+        )
+    return _qb_client
 CATEGORY_ICONS = {
     "video": "🎬", "audio": "🎵", "photo": "🖼️",
     "document": "📄", "torrents": "🧲",
@@ -61,16 +78,6 @@ templates = Jinja2Templates(directory=TEMPLATE_DIR)
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _format_size(size_bytes: int) -> str:
-    if size_bytes == 0:
-        return "0 B"
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if size_bytes < 1024:
-            return f"{size_bytes:.1f} {unit}"
-        size_bytes /= 1024
-    return f"{size_bytes:.1f} PB"
-
 
 def _parse_time(timestamp_str: str) -> Optional[str]:
     """Parse log timestamp like '2026-07-04 12:30:45' to friendly format."""
@@ -109,7 +116,7 @@ def _scan_category(category: str) -> list[dict]:
                     files.append({
                         "name": name,
                         "size": stat.st_size,
-                        "size_str": _format_size(stat.st_size),
+                        "size_str": format_size(stat.st_size),
                         "modified": stat.st_mtime,
                         "time_str": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
                     })
@@ -126,7 +133,7 @@ def _scan_category(category: str) -> list[dict]:
                 files.append({
                     "name": name,
                     "size": stat.st_size,
-                    "size_str": _format_size(stat.st_size),
+                    "size_str": format_size(stat.st_size),
                     "modified": stat.st_mtime,
                     "time_str": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
                 })
@@ -145,7 +152,7 @@ def _get_category_stats() -> dict:
         stats[cat] = {
             "count": len(files),
             "size": cat_size,
-            "size_str": _format_size(cat_size),
+            "size_str": format_size(cat_size),
         }
         total_files += len(files)
         total_size += cat_size
@@ -154,7 +161,7 @@ def _get_category_stats() -> dict:
         "categories": stats,
         "total_files": total_files,
         "total_size": total_size,
-        "total_size_str": _format_size(total_size),
+        "total_size_str": format_size(total_size),
     }
 
 
@@ -257,10 +264,8 @@ async def api_stats():
     # Check if qBittorrent is alive (proxy check)
     qb_status = "unknown"
     try:
-        from src.downloaders.qb_client import QBittorrentClient
-        qb = QBittorrentClient(config.qb_url, config.qb_username, config.qb_password)
+        qb = _get_qb_client()
         qb_status = "online" if await qb.is_alive() else "offline"
-        await qb.close()
     except Exception:
         qb_status = "offline"
 
@@ -305,10 +310,8 @@ async def api_files(category: str, search: str = ""):
 async def api_torrents():
     """Proxy to qBittorrent - list active torrents."""
     try:
-        from src.downloaders.qb_client import QBittorrentClient
-        qb = QBittorrentClient(config.qb_url, config.qb_username, config.qb_password)
+        qb = _get_qb_client()
         torrents = await qb.list_torrents()
-        await qb.close()
 
         # Filter and simplify
         active = []
@@ -319,16 +322,17 @@ async def api_torrents():
                 "name": t.get("name", "Unknown"),
                 "progress": round(progress, 1),
                 "state": state,
-                "size": _format_size(t.get("total_size", 0)),
-                "downloaded": _format_size(t.get("downloaded", 0)),
-                "speed": _format_size(t.get("dlspeed", 0)) + "/s",
+                "size": format_size(t.get("total_size", 0)),
+                "downloaded": format_size(t.get("downloaded", 0)),
+                "speed": format_size(t.get("dlspeed", 0)) + "/s",
                 "eta": _format_eta(t.get("eta", 0)),
                 "ratio": round(t.get("ratio", 0), 2),
             })
 
         return {"torrents": active, "count": len(active)}
-    except Exception as e:
-        return {"error": str(e), "torrents": []}
+    except Exception:
+        logger.exception("Failed to fetch torrents from qBittorrent")
+        return {"error": "无法连接 qBittorrent，请检查服务状态", "torrents": []}
 
 
 @app.get("/api/logs")

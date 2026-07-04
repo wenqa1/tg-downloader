@@ -3,6 +3,7 @@ User-mode receiver - listens for new messages in the target group
 using the Telethon user account client.
 """
 
+import getpass
 import logging
 import sys
 from typing import Callable, List
@@ -16,6 +17,7 @@ from telethon.errors import (
 
 from config import Config
 from notifiers.base import BaseNotifier
+from receivers.base import BaseReceiver
 
 logger = logging.getLogger("tg-downloader.receiver")
 
@@ -23,7 +25,7 @@ logger = logging.getLogger("tg-downloader.receiver")
 HandlerFunc = Callable
 
 
-class UserReceiver:
+class UserReceiver(BaseReceiver):
     """
     Receives messages via Telethon user client in the target group.
     Routes incoming messages to registered handler functions.
@@ -57,6 +59,14 @@ class UserReceiver:
         logger.info(f"✅ Logged in as: {self._me.first_name} (ID: {self._me.id})")
         if self._me.username:
             logger.info(f"   Username: @{self._me.username}")
+
+        # Step 2b: Validate OWNER_USER_ID
+        if not self.config.owner_user_id:
+            logger.critical(
+                "OWNER_USER_ID is not set! The bot will reject all messages.\n"
+                "Get your User ID from @userinfobot and set it in .env"
+            )
+            sys.exit(1)
 
         # Step 3: Verify target group exists
         await self._verify_target_group()
@@ -118,16 +128,15 @@ class UserReceiver:
             logger.error("❌ Invalid verification code. Restart and try again.")
             sys.exit(1)
         except SessionPasswordNeededError:
-            # 2FA enabled - prompt for password
+            # 2FA enabled - prompt for password (no echo)
             if sys.stdin.isatty():
-                print("\n🔐 Enter your 2FA password: ", end="", flush=True)
-                password = sys.stdin.readline().strip()
+                password = getpass.getpass("🔐 Enter your 2FA password: ")
             else:
                 logger.critical(
                     "❌ 2FA password required but no interactive terminal.\n"
                     "  Run: docker attach tg-downloader"
                 )
-                password = sys.stdin.readline().strip()
+                sys.exit(1)
             await client.sign_in(password=password)
         except FloodWaitError as e:
             logger.error(f"❌ Rate limited by Telegram. Wait {e.seconds} seconds before retrying.")

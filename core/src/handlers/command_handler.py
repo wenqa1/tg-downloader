@@ -4,12 +4,12 @@ Supports: status, help, stats, id
 """
 
 import logging
-import os
 import time
 
 from telethon import TelegramClient
 
 from config import Config
+from helpers import format_size, format_time
 from notifiers.base import BaseNotifier
 
 logger = logging.getLogger("tg-downloader.command_handler")
@@ -131,7 +131,7 @@ async def _cmd_stats(notifier: BaseNotifier, config: Config) -> None:
     base = config.download_base_path
 
     # Count files by category
-    categories = ["video", "audio", "photo", "document"]
+    categories = ["video", "audio", "photo", "document", "torrents"]
     stats_lines = ["📊 *下载统计*"]
 
     for cat in categories:
@@ -143,12 +143,13 @@ async def _cmd_stats(notifier: BaseNotifier, config: Config) -> None:
                 for f in files
                 if os.path.isfile(os.path.join(dir_path, f))
             )
-            icon = {"video": "🎬", "audio": "🎵", "photo": "🖼️", "document": "📄"}.get(cat, "📁")
-            stats_lines.append(f"\n{icon} *{cat.capitalize()}:* {len(files)} 个 ({_format_size(total_size)})")
+            icon = {"video": "🎬", "audio": "🎵", "photo": "🖼️", "document": "📄", "torrents": "🧲"}.get(cat, "📁")
+            label = {"torrents": "Torrents"}.get(cat, cat.capitalize())
+            stats_lines.append(f"\n{icon} *{label}:* {len(files)} 个 ({format_size(total_size)})")
 
     # Uptime
     uptime = time.time() - _START_TIME
-    stats_lines.append(f"\n⏱️ *运行时间:* {_format_time(int(uptime))}")
+    stats_lines.append(f"\n⏱️ *运行时间:* {format_time(int(uptime))}")
 
     await notifier.send("\n".join(stats_lines))
 
@@ -166,28 +167,3 @@ async def _cmd_id(event, notifier: BaseNotifier) -> None:
     )
 
 
-def _format_size(size_bytes: int) -> str:
-    """Format bytes to human-readable string."""
-    if size_bytes == 0:
-        return "0 B"
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if size_bytes < 1024:
-            return f"{size_bytes:.1f} {unit}"
-        size_bytes /= 1024
-    return f"{size_bytes:.1f} PB"
-
-
-def _format_time(seconds: int) -> str:
-    """Format seconds to human-readable time."""
-    days, seconds = divmod(seconds, 86400)
-    hours, seconds = divmod(seconds, 3600)
-    minutes, seconds = divmod(seconds, 60)
-    parts = []
-    if days > 0:
-        parts.append(f"{days}天")
-    if hours > 0:
-        parts.append(f"{hours}时")
-    if minutes > 0:
-        parts.append(f"{minutes}分")
-    parts.append(f"{seconds}秒")
-    return "".join(parts)

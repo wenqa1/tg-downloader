@@ -15,6 +15,7 @@ import os
 import signal
 import sys
 from logging.handlers import RotatingFileHandler
+from typing import Optional
 
 from telethon import TelegramClient
 
@@ -119,23 +120,24 @@ async def _run_user_mode(config: Config) -> None:
     receiver.register_handler(handle_magnet)
     receiver.register_handler(handle_command)
 
-    # Handle graceful shutdown
-    shutdown_event = asyncio.Event()
+    # Handle graceful shutdown — signal handler directly disconnects
+    # the client, which causes run_until_disconnected() to return.
+    shutdown_task: Optional[asyncio.Task] = None
 
     def _signal_handler():
+        nonlocal shutdown_task
         logger.info("Shutdown signal received, closing gracefully...")
-        shutdown_event.set()
+        # Schedule disconnect on the event loop to unblock run_until_disconnected
+        if shutdown_task is None or shutdown_task.done():
+            shutdown_task = asyncio.create_task(client.disconnect())
 
     # Set up signal handlers (works on Unix; on Windows we handle Ctrl+C)
-    try:
-        loop = asyncio.get_event_loop()
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            try:
-                loop.add_signal_handler(sig, _signal_handler)
-            except NotImplementedError:
-                pass  # Windows doesn't support add_signal_handler
-    except Exception:
-        pass
+    loop = asyncio.get_event_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, _signal_handler)
+        except (NotImplementedError, RuntimeError):
+            pass  # Windows or not in main loop
 
     try:
         # Start listening (blocks until disconnected)

@@ -200,29 +200,32 @@ class QBittorrentClient:
         logger.error(f"Failed to add magnet: {msg}")
         return None
 
-    async def add_torrent_file(self, file_path: str, save_path: str = "") -> Optional[str]:
-        """Add a .torrent file from disk to qBittorrent."""
+    async def add_torrent_file(self, file_path: str, save_path: str = "") -> bool:
+        """Add a .torrent file from disk to qBittorrent. Returns True on success."""
         try:
+            # Read file content into memory first so retries don't get an empty file
             with open(file_path, "rb") as f:
-                data = aiohttp.FormData()
-                data.add_field("torrents", f, filename=os.path.basename(file_path))
-                if save_path:
-                    data.add_field("savepath", save_path)
+                file_content = f.read()
 
-                success, msg = await self._post_multipart(
-                    "/api/v2/torrents/add", data,
-                )
-                if success:
-                    logger.info(f"Torrent file added: {file_path}")
-                    return "added"
-                logger.error(f"Failed to add torrent file: {msg}")
-                return None
+            data = aiohttp.FormData()
+            data.add_field("torrents", file_content, filename=os.path.basename(file_path))
+            if save_path:
+                data.add_field("savepath", save_path)
+
+            success, msg = await self._post_multipart(
+                "/api/v2/torrents/add", data,
+            )
+            if success:
+                logger.info(f"Torrent file added: {file_path}")
+                return True
+            logger.error(f"Failed to add torrent file: {msg}")
+            return False
         except FileNotFoundError:
             logger.error(f"Torrent file not found: {file_path}")
-            return None
+            return False
         except Exception as e:
             logger.error(f"Error adding torrent file: {e}")
-            return None
+            return False
 
     async def get_torrent_info(self, info_hash: str) -> Optional[dict]:
         """Get information about a specific torrent by info hash."""
