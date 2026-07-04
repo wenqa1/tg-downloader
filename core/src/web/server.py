@@ -72,7 +72,7 @@ app = FastAPI(title="TG Downloader Manager")
 os.makedirs(STATIC_DIR, exist_ok=True)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-templates = Jinja2Templates(directory=TEMPLATE_DIR)
+templates = Jinja2Templates(directory=TEMPLATE_DIR, cache_size=0)
 
 # ---------------------------------------------------------------------------
 # Helpers
