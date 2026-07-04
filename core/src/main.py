@@ -66,17 +66,23 @@ logger = logging.getLogger("tg-downloader")
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
-async def _run_user_mode(config: Config) -> None:
-    """Start the bot in user mode (Telethon user account)."""
+async def _run_user_mode(config: Config) -> bool:
+    """
+    Start the bot in user mode (Telethon user account).
+
+    Returns True if the bot ran successfully, False if config is missing.
+    Does NOT exit the process — the web server continues running.
+    """
     logger.info("Starting in USER mode (Telethon user account)...")
 
-    # Validate required config
+    # Validate required config — log error but DON'T exit (web UI must stay up)
     if not config.api_id or not config.api_hash:
         logger.error(
-            "TELEGRAM_API_ID and TELEGRAM_API_HASH are required.\n"
-            "Get them from https://my.telegram.org"
+            "TELEGRAM_API_ID and TELEGRAM_API_HASH are not configured.\n"
+            "  Go to the Web UI → Settings to configure them.\n"
+            "  Bot will retry on next restart."
         )
-        sys.exit(1)
+        return False
 
     # Create shared Telethon client
     client = TelegramClient(
@@ -150,11 +156,16 @@ async def _run_user_mode(config: Config) -> None:
         await client.disconnect()
         logger.info("Shutdown complete")
 
+    return True
 
-async def _run_bot_mode(config: Config) -> None:
-    """Start the bot in bot mode (aiogram + Telethon)."""
-    logger.error("Bot mode is not yet implemented. Set RUN_MODE=user or wait for future updates.")
-    sys.exit(1)
+
+async def _run_bot_mode(config: Config) -> bool:
+    """Start the bot in bot mode (aiogram + Telethon). Not yet implemented."""
+    logger.error(
+        "Bot mode is not yet implemented. "
+        "Go to Web UI → Settings and switch to User mode."
+    )
+    return False
 
 
 async def _start_web_server(host: str = "0.0.0.0", port: int = 8081) -> None:
@@ -176,7 +187,7 @@ async def _start_web_server(host: str = "0.0.0.0", port: int = 8081) -> None:
 
 
 async def _main() -> None:
-    """Parse config, start web server, then dispatch to bot mode."""
+    """Parse config, start web server first, then start bot if configured."""
     _setup_logging()
 
     logger.info("=" * 50)
@@ -197,37 +208,48 @@ async def _main() -> None:
     web_port = int(os.getenv("WEB_PORT", "8081"))
     web_host = os.getenv("WEB_HOST", "0.0.0.0")
 
-    if bot_only:
-        # Bot only (no web server, useful for debugging)
-        if config.run_mode == "user":
-            await _run_user_mode(config)
-        elif config.run_mode == "bot":
-            await _run_bot_mode(config)
-        return
-
-    # Start web server as a background task
-    web_task = asyncio.create_task(_start_web_server(web_host, web_port))
+    # ═══════════════════════════════════════════════════════════════
+    # Step 1: Start web server FIRST (always, even if bot fails)
+    # ═══════════════════════════════════════════════════════════════
+    if not bot_only:
+        web_task = asyncio.create_task(_start_web_server(web_host, web_port))
+        # Give web server a moment to start
+        await asyncio.sleep(0.5)
+    else:
+        web_task = None
 
     if web_only:
-        # Web server only
+        # Web server only mode — wait forever
         await web_task
         return
 
-    # Start bot + web server concurrently
-    try:
-        if config.run_mode == "user":
-            await _run_user_mode(config)
-        elif config.run_mode == "bot":
-            await _run_bot_mode(config)
+    # ═══════════════════════════════════════════════════════════════
+    # Step 2: Start bot (non-fatal if config is missing)
+    # ═══════════════════════════════════════════════════════════════
+    if config.run_mode == "user":
+        bot_ok = await _run_user_mode(config)
+    elif config.run_mode == "bot":
+        bot_ok = await _run_bot_mode(config)
+    else:
+        logger.error("Unknown RUN_MODE: %s. Must be 'user' or 'bot'.", config.run_mode)
+        bot_ok = False
+
+    # ═══════════════════════════════════════════════════════════════
+    # Step 3: Bot finished — keep web server running
+    # ═══════════════════════════════════════════════════════════════
+    if web_task is not None and not web_task.done():
+        if not bot_ok:
+            logger.info(
+                "Bot is not running (config may be incomplete).\n"
+                "  Web UI is still available at http://localhost:%s\n"
+                "  Go to Settings to configure API credentials, then restart.",
+                web_port,
+            )
         else:
-            logger.error("Unknown RUN_MODE: %s. Must be 'user' or 'bot'.", config.run_mode)
-    finally:
-        # When bot exits, cancel web server
-        web_task.cancel()
-        try:
-            await web_task
-        except (asyncio.CancelledError, KeyboardInterrupt):
-            pass
+            logger.info("Bot has stopped. Web UI remains available.")
+
+        # Keep the process alive for the web server
+        await web_task
 
 
 def main() -> None:
