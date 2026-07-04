@@ -88,7 +88,18 @@
    - 在 Telegram 中创建一个私密群组
    - 把你的主号 + 闲置副号都拉进群
 
-### 安装步骤
+### 🚀 一键部署
+
+```bash
+# 只需 3 条命令：
+git clone https://github.com/wenqa1/tg-downloader.git
+cd tg-downloader
+bash deploy.sh
+```
+
+> `deploy.sh` 会自动完成：检查环境 → 创建 `.env`（首次引导配置）→ 创建目录 → 构建镜像 → 启动服务。
+
+### 安装步骤（手动）
 
 #### 1. 下载项目
 
@@ -235,6 +246,7 @@ docker-compose restart tg-downloader
 | 📊 **总览** | `/` | 统计卡片、分类占比、最近下载、系统状态 |
 | 📁 **文件** | `/files` | 按分类浏览文件、搜索文件 |
 | 🧲 **磁力链** | `/torrents` | qBittorrent 下载进度、状态、速度、ETA |
+| ⚙️ **设置** | `/settings` | Web 界面管理 API 凭证、Telegram 配置（无需编辑 .env） |
 
 > 总览页面每 15 秒自动刷新，磁力链页面每 10 秒自动刷新。
 
@@ -246,6 +258,8 @@ docker-compose restart tg-downloader
 | `GET /api/files/{category}` | 列出某分类文件（支持 `?search=` 搜索） |
 | `GET /api/torrents` | qBittorrent 下载列表（进度/速度/ETA/比率） |
 | `GET /api/logs` | 最近下载事件（从日志解析） |
+| `GET /api/settings` | 获取当前配置（合并 .env + settings.json） |
+| `PUT /api/settings` | 保存配置到 settings.json（重启后生效） |
 
 #### `/api/stats` 响应结构
 

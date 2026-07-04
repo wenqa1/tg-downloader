@@ -11,6 +11,7 @@ services:
       - ./downloads:/downloads          # 下载文件持久化
       - ./core/sessions:/app/sessions   # Telethon 会话持久化
       - ./core/logs:/app/logs           # 日志持久化
+      - ./core/settings:/app/settings   # 配置持久化（Web 界面可修改）
     tty: true                           # 首次登录需要交互式终端
     stdin_open: true                    # 首次登录需要标准输入
     depends_on:
@@ -33,6 +34,7 @@ services:
     volumes:
       - ./downloads:/downloads          # 访问下载文件
       - ./core/logs:/app/logs           # 读取日志
+      - ./core/settings:/app/settings   # 配置读写（Web 设置页面）
     ports:
       - "8081:8081"                     # Web UI
     depends_on:

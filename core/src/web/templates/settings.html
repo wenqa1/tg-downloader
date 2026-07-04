@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <h1>设置</h1>
+    <div class="header-actions">
+        <button class="btn btn-sm" onclick="saveSettings()">💾 保存设置</button>
+    </div>
+</div>
+
+<form id="settingsForm" onsubmit="return false;">
+    <!-- Telegram 配置 -->
+    <div class="section">
+        <h2 class="section-title">📡 Telegram API 配置</h2>
+        <p class="section-desc">从 <a href="https://my.telegram.org" target="_blank">my.telegram.org</a> → API Development Tools 获取</p>
+
+        <div class="form-group">
+            <label class="form-label" for="telegram_api_id">API ID</label>
+            <input type="text" class="form-input" id="telegram_api_id" name="telegram_api_id"
+                   placeholder="12345" inputmode="numeric">
+            <span class="form-hint">必填。Telegram 应用 API ID</span>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label" for="telegram_api_hash">API Hash</label>
+            <input type="text" class="form-input" id="telegram_api_hash" name="telegram_api_hash"
+                   placeholder="abcdef1234567890abcdef1234567890">
+            <span class="form-hint">必填。Telegram 应用 API Hash</span>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label" for="phone_number">手机号</label>
+            <input type="text" class="form-input" id="phone_number" name="phone_number"
+                   placeholder="+8613800138000" inputmode="tel">
+            <span class="form-hint">User 模式必填。闲置副号的手机号（含国家码）</span>
+        </div>
+    </div>
+
+    <!-- Telegram 用户配置 -->
+    <div class="section">
+        <h2 class="section-title">👤 Telegram 用户配置</h2>
+
+        <div class="form-group">
+            <label class="form-label" for="owner_user_id">主人 User ID</label>
+            <input type="text" class="form-input" id="owner_user_id" name="owner_user_id"
+                   placeholder="123456789" inputmode="numeric">
+            <span class="form-hint">必填。你的主号 User ID（白名单 + 接收通知）</span>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label" for="target_group_chat_id">监听群组 Chat ID</label>
+            <input type="text" class="form-input" id="target_group_chat_id" name="target_group_chat_id"
+                   placeholder="-1001234567890" inputmode="numeric">
+            <span class="form-hint">必填。机器人监听的群组 ID（含负号）</span>
+        </div>
+    </div>
+
+    <!-- qBittorrent 配置 -->
+    <div class="section">
+        <h2 class="section-title">🧲 qBittorrent 配置</h2>
+
+        <div class="form-group">
+            <label class="form-label" for="qb_url">Web API 地址</label>
+            <input type="text" class="form-input" id="qb_url" name="qb_url"
+                   placeholder="http://qbittorrent:8080">
+            <span class="form-hint">qBittorrent Web API 地址（容器内使用容器名）</span>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label" for="qb_username">用户名</label>
+            <input type="text" class="form-input" id="qb_username" name="qb_username"
+                   placeholder="admin">
+            <span class="form-hint">qBittorrent 登录用户名</span>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label" for="qb_password">密码</label>
+            <input type="password" class="form-input" id="qb_password" name="qb_password"
+                   placeholder="输入新密码">
+            <span class="form-hint">⚠️ 请修改为强密码，不要使用默认值</span>
+        </div>
+    </div>
+
+    <!-- 系统信息 -->
+    <div class="section">
+        <h2 class="section-title">ℹ️ 系统信息</h2>
+        <div class="status-card">
+            <div class="status-row">
+                <span>下载路径</span>
+                <span class="tag tag-online" id="downloadPath">/downloads</span>
+            </div>
+            <div class="status-row">
+                <span>配置方式</span>
+                <span class="tag tag-idle">.env 优先 > settings.json</span>
+            </div>
+        </div>
+        <p class="section-desc" style="margin-top:12px; color: var(--text-muted);">
+            💡 通过 Web 界面保存的设置会写入 <code>settings.json</code>。
+            环境变量 (`.env`) 始终具有更高优先级。
+            修改配置后需要 <strong>重启容器</strong> 才能生效：
+            <code style="display:block; margin-top:6px; padding:8px; background:var(--bg-secondary); border-radius:4px;">
+            docker-compose restart tg-downloader
+            </code>
+        </p>
+    </div>
+</form>
+
+<!-- Toast notification -->
+<div id="toast" class="toast" style="display:none;"></div>
+
+<script>
+// Load settings on page load
+document.addEventListener('DOMContentLoaded', async () => {
+    try {
+        const resp = await fetch('/api/settings');
+        const data = await resp.json();
+
+        // Fill form fields
+        for (const [key, value] of Object.entries(data)) {
+            const el = document.getElementById(key);
+            if (el) {
+                el.value = value;
+            }
+        }
+        // Show download path
+        const dp = document.getElementById('downloadPath');
+        if (dp && data.download_base_path) {
+            dp.textContent = data.download_base_path;
+        }
+    } catch (e) {
+        showToast('❌ 加载设置失败', 'error');
+    }
+});
+
+// Save settings
+async function saveSettings() {
+    const form = document.getElementById('settingsForm');
+    const data = {};
+    const fields = [
+        'telegram_api_id', 'telegram_api_hash', 'phone_number',
+        'owner_user_id', 'target_group_chat_id',
+        'qb_url', 'qb_username', 'qb_password',
+    ];
+
+    for (const key of fields) {
+        const el = document.getElementById(key);
+        if (el && el.value) {
+            data[key] = el.value;
+        }
+    }
+
+    const btn = document.querySelector('.header-actions .btn');
+    btn.textContent = '⏳ 保存中...';
+    btn.disabled = true;
+
+    try {
+        const resp = await fetch('/api/settings', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        const result = await resp.json();
+
+        if (result.success) {
+            showToast('✅ ' + result.message, 'success');
+        } else {
+            showToast('❌ ' + (result.error || '保存失败'), 'error');
+        }
+    } catch (e) {
+        showToast('❌ 网络错误，请重试', 'error');
+    } finally {
+        btn.textContent = '💾 保存设置';
+        btn.disabled = false;
+    }
+}
+
+// Toast notification
+function showToast(message, type) {
+    const toast = document.getElementById('toast');
+    toast.textContent = message;
+    toast.className = 'toast toast-' + type;
+    toast.style.display = 'block';
+    setTimeout(() => { toast.style.display = 'none'; }, 4000);
+}
+</script>
+{% endblock %}

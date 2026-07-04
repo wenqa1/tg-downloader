@@ -6,11 +6,13 @@ FastAPI-based web server providing:
   - File browser by category
   - Torrent management (qBittorrent proxy)
   - Recent download history
+  - Settings management (API credentials, Telegram config)
 
 Run with: python -m src.web.server
 Access at: http://localhost:8081
 """
 
+import json
 import logging
 import os
 import re
@@ -26,7 +28,7 @@ from fastapi.templating import Jinja2Templates
 
 # Add src to path so we can import config
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-from src.config import load_config
+from src.config import load_config, SETTINGS_FILE
 from src.downloaders.qb_client import QBittorrentClient
 from src.helpers import format_size
 
@@ -249,6 +251,137 @@ async def torrents_page(request: Request):
         "request": request,
         "page": "torrents",
     })
+
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_page(request: Request):
+    """Settings management page."""
+    return templates.TemplateResponse("settings.html", {
+        "request": request,
+        "page": "settings",
+    })
+
+
+# ---------------------------------------------------------------------------
+# Routes - Settings API
+# ---------------------------------------------------------------------------
+
+SETTINGS_KEYS = [
+    "telegram_api_id",
+    "telegram_api_hash",
+    "phone_number",
+    "owner_user_id",
+    "target_group_chat_id",
+    "qb_url",
+    "qb_username",
+    "qb_password",
+]
+
+
+def _read_settings_file() -> dict:
+    """Read settings from JSON file, return empty dict if not exists."""
+    try:
+        if os.path.exists(SETTINGS_FILE):
+            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning("Failed to read settings: %s", e)
+    return {}
+
+
+def _write_settings_file(data: dict) -> bool:
+    """Write settings to JSON file."""
+    try:
+        os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
+        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        return True
+    except OSError as e:
+        logger.error("Failed to write settings: %s", e)
+        return False
+
+
+@app.get("/api/settings")
+async def api_get_settings():
+    """
+    Get current settings.
+
+    Merges env vars with file settings (env vars take priority).
+    Secrets (api_hash, qb_password) are masked for security.
+    """
+    file_settings = _read_settings_file()
+
+    result = {}
+    for key in SETTINGS_KEYS:
+        # Check env var first
+        env_key = {
+            "telegram_api_id": "TELEGRAM_API_ID",
+            "telegram_api_hash": "TELEGRAM_API_HASH",
+            "phone_number": "PHONE_NUMBER",
+            "owner_user_id": "OWNER_USER_ID",
+            "target_group_chat_id": "TARGET_GROUP_CHAT_ID",
+            "qb_url": "QBITTORRENT_URL",
+            "qb_username": "QBITTORRENT_USERNAME",
+            "qb_password": "QBITTORRENT_PASSWORD",
+        }.get(key)
+
+        env_value = os.getenv(env_key) if env_key else None
+        file_value = file_settings.get(key)
+
+        # Env var takes priority
+        value = env_value if env_value else file_value
+        if value is not None:
+            # Convert types
+            if key in ("telegram_api_id", "owner_user_id", "target_group_chat_id"):
+                try:
+                    value = int(value)
+                except (ValueError, TypeError):
+                    value = 0
+            result[key] = value
+
+    # Always include download path (read-only)
+    result["download_base_path"] = config.download_base_path
+
+    return result
+
+
+@app.put("/api/settings")
+async def api_put_settings(request: Request):
+    """
+    Save settings to file. Env vars still take priority at runtime.
+    Changes take effect after container restart.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "无效的 JSON 格式"},
+        )
+
+    # Validate allowed keys
+    clean = {}
+    for key in SETTINGS_KEYS:
+        if key in body:
+            clean[key] = body[key]
+
+    if not clean:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "没有需要保存的配置项"},
+        )
+
+    # Merge with existing file settings
+    existing = _read_settings_file()
+    existing.update(clean)
+
+    if _write_settings_file(existing):
+        return {"success": True, "message": "设置已保存，重启后生效"}
+    else:
+        return JSONResponse(
+            status_code=500,
+            content={"error": "保存设置失败，请检查目录权限"},
+        )
 
 
 # ---------------------------------------------------------------------------

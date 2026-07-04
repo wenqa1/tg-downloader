@@ -11,6 +11,7 @@
 downloads/
 core/sessions/
 core/logs/
+core/settings/
 qbittorrent/
 
 # Telethon session files
