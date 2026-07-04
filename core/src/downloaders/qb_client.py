@@ -26,16 +26,18 @@ class QBittorrentClient:
         self.password = password
         self._session: Optional[aiohttp.ClientSession] = None
         self._cookie: Optional[str] = None
+        self._session_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # Session management
     # ------------------------------------------------------------------
 
     async def _get_session(self) -> aiohttp.ClientSession:
-        if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
-            self._cookie = None  # Reset cookie if we make a new session
-        return self._session
+        async with self._session_lock:
+            if self._session is None or self._session.closed:
+                self._session = aiohttp.ClientSession()
+                self._cookie = None  # Reset cookie if we make a new session
+            return self._session
 
     async def _login(self) -> bool:
         """Authenticate with qBittorrent and store session cookie."""
@@ -273,6 +275,8 @@ class QBittorrentClient:
         """Close the HTTP session."""
         if self._session and not self._session.closed:
             await self._session.close()
+        self._session = None
+        self._cookie = None
 
     @staticmethod
     def _extract_info_hash(magnet: str) -> Optional[str]:

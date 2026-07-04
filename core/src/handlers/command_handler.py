@@ -4,6 +4,7 @@ Supports: status, help, stats, id
 """
 
 import logging
+import os
 import time
 
 from telethon import TelegramClient

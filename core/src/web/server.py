@@ -23,7 +23,7 @@ import uvicorn
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
+from jinja2 import Environment, FileSystemLoader
 
 from config import load_config, read_settings_file, write_settings_file, _SETTINGS_MAP
 from downloaders.qb_client import QBittorrentClient
@@ -72,8 +72,17 @@ app = FastAPI(title="TG Downloader Manager")
 os.makedirs(STATIC_DIR, exist_ok=True)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-templates = Jinja2Templates(directory=TEMPLATE_DIR)
-templates.env.cache_size = 0  # Disable Jinja2 cache to avoid LRUCache bug
+# Jinja2 with cache disabled to avoid LRUCache bug on some platforms
+_jinja_env = Environment(
+    loader=FileSystemLoader(TEMPLATE_DIR),
+    cache_size=0,
+)
+
+
+def _render(name: str, **context) -> str:
+    """Render a Jinja2 template with the given context."""
+    template = _jinja_env.get_template(name)
+    return template.render(**context)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -183,11 +192,11 @@ def _parse_recent_logs(lines: int = 50) -> list[dict]:
 
     try:
         with open(LOG_PATH, "r", encoding="utf-8") as f:
-            lines = f.readlines()[-lines:]
+            all_lines = f.readlines()[-lines:]
     except (FileNotFoundError, IOError):
         return events
 
-    for line in reversed(lines):
+    for line in reversed(all_lines):
         line = line.strip()
         if not line:
             continue
@@ -223,41 +232,37 @@ def _parse_recent_logs(lines: int = 50) -> list[dict]:
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard_page(request: Request):
-    return templates.TemplateResponse("dashboard.html", {
-        "request": request,
-        "page": "dashboard",
-    })
+    content = _render("dashboard.html", request=request, page="dashboard")
+    return HTMLResponse(content)
 
 
 @app.get("/files", response_class=HTMLResponse)
 async def files_page(request: Request, category: str = "video"):
     if category not in CATEGORIES:
         category = "video"
-    return templates.TemplateResponse("files.html", {
-        "request": request,
-        "page": "files",
-        "current_category": category,
-        "categories": CATEGORIES,
-        "category_labels": CATEGORY_LABELS,
-        "category_icons": CATEGORY_ICONS,
-    })
+    content = _render(
+        "files.html",
+        request=request,
+        page="files",
+        current_category=category,
+        categories=CATEGORIES,
+        category_labels=CATEGORY_LABELS,
+        category_icons=CATEGORY_ICONS,
+    )
+    return HTMLResponse(content)
 
 
 @app.get("/torrents", response_class=HTMLResponse)
 async def torrents_page(request: Request):
-    return templates.TemplateResponse("torrents.html", {
-        "request": request,
-        "page": "torrents",
-    })
+    content = _render("torrents.html", request=request, page="torrents")
+    return HTMLResponse(content)
 
 
 @app.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request):
     """Settings management page."""
-    return templates.TemplateResponse("settings.html", {
-        "request": request,
-        "page": "settings",
-    })
+    content = _render("settings.html", request=request, page="settings")
+    return HTMLResponse(content)
 
 
 # ---------------------------------------------------------------------------

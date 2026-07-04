@@ -139,7 +139,7 @@ async def _run_user_mode(config: Config) -> bool:
             shutdown_task = asyncio.create_task(client.disconnect())
 
     # Set up signal handlers (works on Unix; on Windows we handle Ctrl+C)
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
             loop.add_signal_handler(sig, _signal_handler)

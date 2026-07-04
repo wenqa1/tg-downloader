@@ -5,6 +5,7 @@ based on message media type and file properties.
 
 import mimetypes
 import os
+import time as _time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -134,17 +135,21 @@ def get_download_path(base_path: str, category: str, filename: str) -> str:
 def resolve_conflict(filepath: str) -> str:
     """
     If a file already exists, append _1, _2, etc. to avoid overwriting.
+
+    Falls back to a timestamp suffix after MAX_RETRIES attempts.
     """
     if not os.path.exists(filepath):
         return filepath
 
     base, ext = os.path.splitext(filepath)
-    counter = 1
-    while True:
+    MAX_RETRIES = 1000
+    for counter in range(1, MAX_RETRIES + 1):
         new_path = f"{base}_{counter}{ext}"
         if not os.path.exists(new_path):
             return new_path
-        counter += 1
+
+    # Last resort: timestamp-based suffix (unlikely to reach here)
+    return f"{base}_{int(_time.time())}{ext}"
 
 
 def _sanitize_filename(name: str) -> str:

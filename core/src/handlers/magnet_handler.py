@@ -70,7 +70,7 @@ async def _process_magnet(
         f"🧲 *检测到磁力链*\n`{magnet_link[:80]}...`\n正在添加到 qBittorrent..."
     )
 
-    torrents_dir = f"{config.download_base_path}/torrents"
+    torrents_dir = os.path.join(config.download_base_path, "torrents")
     info_hash = await qb_client.add_magnet(magnet_link, save_path=torrents_dir)
 
     if info_hash:
@@ -104,11 +104,17 @@ async def _process_torrent_url(
 
                 # Check content size before reading (max 10MB)
                 content_length = resp.headers.get("Content-Length")
-                if content_length and int(content_length) > 10 * 1024 * 1024:
-                    await notifier.send(
-                        f"❌ *种子文件过大*\n文件超过 10MB 限制，已跳过"
-                    )
-                    return
+                if content_length:
+                    try:
+                        length = int(content_length)
+                        if length > 10 * 1024 * 1024:
+                            await notifier.send(
+                                f"❌ *种子文件过大*\n文件超过 10MB 限制，已跳过"
+                            )
+                            return
+                    except (ValueError, TypeError):
+                        # Invalid Content-Length header, proceed to read and check
+                        pass
 
                 content = await resp.read()
                 if len(content) > 10 * 1024 * 1024:
@@ -127,15 +133,15 @@ async def _process_torrent_url(
                     filename = f"torrent_{int(time.time())}.torrent"
 
                 # Save to watch directory (async I/O)
-                watch_dir = f"{config.download_base_path}/torrents/watch"
-                os.makedirs(watch_dir, exist_ok=True)
+                watch_dir = os.path.join(config.download_base_path, "torrents", "watch")
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, os.makedirs, watch_dir, 0o755, True)
                 filepath = os.path.join(watch_dir, filename)
 
-                loop = asyncio.get_event_loop()
                 await loop.run_in_executor(None, _write_file, filepath, content)
 
                 # Add to qBittorrent
-                torrents_dir = f"{config.download_base_path}/torrents"
+                torrents_dir = os.path.join(config.download_base_path, "torrents")
                 added = await qb_client.add_torrent_file(filepath, save_path=torrents_dir)
 
                 if added:

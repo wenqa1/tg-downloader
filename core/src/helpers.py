@@ -87,15 +87,18 @@ async def monitor_torrent(
             progress = info.get("progress", 0) * 100  # 0.0-1.0 → percentage
             state = info.get("state", "")
 
-            # Notify every 25 %
-            progress_step = int(progress / 25) * 25
-            if progress_step > last_progress and progress_step > 0:
-                last_progress = progress_step
-                await notifier.send(
-                    f"🧲 *{label}下载进度*\n"
-                    f"📄 `{name}`\n"
-                    f"📊 {progress_step}% - 状态: {state}"
-                )
+            # Notify every 25 % (send all missed thresholds on large jumps)
+            current_step = int(progress / 25) * 25
+            if current_step > last_progress:
+                for step in range(max(last_progress + 25, 25), current_step + 1, 25):
+                    if step > progress:
+                        break
+                    last_progress = step
+                    await notifier.send(
+                        f"🧲 *{label}下载进度*\n"
+                        f"📄 `{name}`\n"
+                        f"📊 {step:.0f}% (实际 {progress:.0f}%) - 状态: {state}"
+                    )
 
             # Completion
             if state in ("completed", "downloaded"):
